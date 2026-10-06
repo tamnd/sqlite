@@ -422,4 +422,33 @@ do_execsql_test vacuum-11.3 {
   PRAGMA page_size;
 } {4096}
 
+# VACUUM copies a table that has an index with OP_RowCell followed by
+# OP_Insert and OP_IdxInsert under OPFLAG_PREFORMAT.  Those opcodes must
+# take the cell OP_RowCell built and not the data register, which nothing
+# wrote.  Rows with empty, zero-length blob and NULL values check that the
+# copy is exact and not taken from a stale register.
+#
+reset_db
+do_execsql_test vacuum-12.1 {
+  CREATE TABLE t1(a,b);
+  CREATE INDEX i1 ON t1(a);
+  INSERT INTO t1 VALUES(2,'');
+  INSERT INTO t1 VALUES(1,zeroblob(0));
+  INSERT INTO t1 VALUES(NULL,NULL);
+  INSERT INTO t1 VALUES(3,randomblob(3000));
+  CREATE TABLE t2(x PRIMARY KEY, y) WITHOUT ROWID;
+  INSERT INTO t2 SELECT a, b FROM t1 WHERE a IS NOT NULL;
+  CREATE TABLE t3 AS SELECT a, typeof(b) AS t, hex(b) AS h FROM t1;
+  CREATE TABLE t4 AS SELECT x, typeof(y) AS t, hex(y) AS h FROM t2;
+  VACUUM;
+  PRAGMA integrity_check;
+} {ok}
+do_execsql_test vacuum-12.2 {
+  SELECT count(*) FROM t1, t3
+   WHERE t1.a IS t3.a AND typeof(t1.b)=t3.t AND hex(t1.b)=t3.h;
+  SELECT count(*) FROM t2, t4
+   WHERE t2.x=t4.x AND typeof(t2.y)=t4.t AND hex(t2.y)=t4.h;
+  SELECT a FROM t1 INDEXED BY i1 ORDER BY a;
+} {4 3 {} 1 2 3}
+
 finish_test
