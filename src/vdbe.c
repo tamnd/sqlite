@@ -5967,15 +5967,26 @@ case OP_Insert: {
     p->nChange++;
     if( pOp->p5 & OPFLAG_LASTROWID ) db->lastRowid = x.nKey;
   }
-  assert( (pData->flags & (MEM_Blob|MEM_Str))!=0 || pData->n==0 );
-  x.pData = pData->z;
-  x.nData = pData->n;
-  seekResult = ((pOp->p5 & OPFLAG_USESEEKRESULT) ? pC->seekResult : 0);
-  if( pData->flags & MEM_Zero ){
-    x.nZero = pData->u.nZero;
-  }else{
+  if( pOp->p5 & OPFLAG_PREFORMAT ){
+    /* The OP_RowCell before this opcode has already built the cell in the
+    ** btree's preformat buffer, and it never writes register P2, so the z,
+    ** n and u of that register were never set.  sqlite3BtreeInsert() takes
+    ** the cell from the buffer, so hand it an empty payload rather than
+    ** reading whatever the register held before. */
+    x.pData = 0;
+    x.nData = 0;
     x.nZero = 0;
+  }else{
+    assert( (pData->flags & (MEM_Blob|MEM_Str))!=0 || pData->n==0 );
+    x.pData = pData->z;
+    x.nData = pData->n;
+    if( pData->flags & MEM_Zero ){
+      x.nZero = pData->u.nZero;
+    }else{
+      x.nZero = 0;
+    }
   }
+  seekResult = ((pOp->p5 & OPFLAG_USESEEKRESULT) ? pC->seekResult : 0);
   x.pKey = 0;
   assert( BTREE_PREFORMAT==OPFLAG_PREFORMAT );
   rc = sqlite3BtreeInsert(pC->uc.pCursor, &x,
@@ -6749,10 +6760,17 @@ case OP_IdxInsert: {        /* in2 */
   if( pOp->p5 & OPFLAG_NCHANGE ) p->nChange++;
   assert( pC->eCurType==CURTYPE_BTREE );
   assert( pC->isTable==0 );
-  rc = ExpandBlob(pIn2);
-  if( rc ) goto abort_due_to_error;
-  x.nKey = pIn2->n;
-  x.pKey = pIn2->z;
+  if( pOp->p5 & OPFLAG_PREFORMAT ){
+    /* As in OP_Insert, the OP_RowCell before this opcode has built the cell
+    ** and register P2 was never written, so do not read its n and z. */
+    x.nKey = 0;
+    x.pKey = 0;
+  }else{
+    rc = ExpandBlob(pIn2);
+    if( rc ) goto abort_due_to_error;
+    x.nKey = pIn2->n;
+    x.pKey = pIn2->z;
+  }
   x.aMem = aMem + pOp->p3;
   x.nMem = (u16)pOp->p4.i;
   rc = sqlite3BtreeInsert(pC->uc.pCursor, &x,
